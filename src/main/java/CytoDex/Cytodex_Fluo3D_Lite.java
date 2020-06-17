@@ -18,6 +18,7 @@ import ij.plugin.frame.ThresholdAdjuster;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -36,6 +37,7 @@ import mcib3d.image3d.ImageInt;
 import mcib3d.image3d.ImageLabeller;
 import org.apache.commons.io.FilenameUtils;
 import sc.fiji.analyzeSkeleton.AnalyzeSkeleton_;
+import sc.fiji.analyzeSkeleton.Edge;
 import sc.fiji.analyzeSkeleton.SkeletonResult;
 
 
@@ -62,28 +64,36 @@ public class Cytodex_Fluo3D_Lite implements PlugIn {
         SkeletonResult skeletonResults = analyzeSkeleton.run(AnalyzeSkeleton_.NONE, false, true, null, true, false);
         ImageStack imgStackLab = analyzeSkeleton.getLabeledSkeletons();
         skeletonResults = pruneEndBranches(img.getStack(), imgStackLab, skeletonResults, smallBranch);
-        // remove small branches
-        IJ.showStatus("Removing small branches...");
-        for (int i = 0; i < 5; i++) {
-            removeSmallBranches(img, imgStackLab, skeletonResults);
-            analyzeSkeleton.setup("",img);
-            skeletonResults = analyzeSkeleton.run(AnalyzeSkeleton_.NONE, false, true, null, true, false);
-        }
+//        // remove small branches
+//        IJ.showStatus("Removing small branches...");
+//        for (int i = 0; i < 5; i++) {
+//            removeSmallBranches(img, imgStackLab, skeletonResults);
+//            analyzeSkeleton.setup("",img);
+//            skeletonResults = analyzeSkeleton.run(AnalyzeSkeleton_.NONE, false, true, null, true, false);
+//        }
 
         //  compute parameters for each skeleton
         IJ.showStatus("Computing parameters for each skeleton ...");
         int[] branchNumbers = skeletonResults.getBranches();
         double[] branchLengths = skeletonResults.getAverageBranchLength();
         int branches = 0;
-        double branchLength = 0;
+        double totalBranchLength = 0;
         int skelNumber = skeletonResults.getGraph().length;
         for (int i = 0; i < skelNumber; i++) {
-            if (branchNumbers[i] != 0) {
-                branches += branchNumbers[i];
-                branchLength += branchLengths[i];
+            totalBranchLength += branchLengths[i] * branchNumbers[i];
+            branches += branchNumbers[i];
+        }
+        // other way to have total lenght
+        double totalEdgeLength = 0;
+        for (int i = 0; i < skelNumber; i++) {
+            ArrayList<Edge> listEdges;
+            listEdges = skeletonResults.getGraph()[i].getEdges();
+            for (int e = 0; e < listEdges.size(); e++) {
+                totalEdgeLength += listEdges.get(e).getLength();
             }
         }
-        double[] skeletonParams = {skelNumber, branches, branchLength};
+        //System.out.println("branch length = "+branchLength+ ", total length = "+totalLength);
+        double[] skeletonParams = {skelNumber, branches, totalBranchLength, totalEdgeLength};
         IJ.showStatus("Saving labeled skeleton ...");
         ImagePlus imgLab = new ImagePlus(imgTitle+"_LabelledSkel.tif", imgStackLab);
         ImagePlus imgLabProj = doZProjection(imgLab);
@@ -217,7 +227,7 @@ public class Cytodex_Fluo3D_Lite implements PlugIn {
                         // Global file for mito results
                         FileWriter fwAnalyze = new FileWriter(outDirResults + "Analyze_skeleton_results.xls",false);
                         outPutAnalyze = new BufferedWriter(fwAnalyze);
-                        outPutAnalyze.write("Image Name\tSkeleton number\tBranch number\tSkeleton length\tNucleus number\n");
+                        outPutAnalyze.write("Image Name\tSkeleton number\tBranch number\tTotal Branch Length\tTotal Edge Length\tNucleus number\n");
                     }
 
                     reader.setSeries(0);
@@ -279,7 +289,7 @@ public class Cytodex_Fluo3D_Lite implements PlugIn {
                     int nucNumber = nucPop.getNbObjects();
                     System.out.println("Nucleus population = "+ nucNumber);
                     
-                    outPutAnalyze.write(rootName+"\t"+skeletonParams[0]+"\t"+skeletonParams[1]+"\t"+skeletonParams[2]+"\t"+nucNumber+"\n");
+                    outPutAnalyze.write(rootName+"\t"+skeletonParams[0]+"\t"+skeletonParams[1]+"\t"+skeletonParams[2]+"\t"+skeletonParams[3]+"\t"+nucNumber+"\n");
                     
                     // Save objects image
                     System.out.println("SavingObject population ...");
