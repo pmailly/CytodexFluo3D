@@ -227,7 +227,7 @@ public class Cytodex_Fluo3D_Lite implements PlugIn {
                         // Global file for mito results
                         FileWriter fwAnalyze = new FileWriter(outDirResults + "Analyze_skeleton_results.xls",false);
                         outPutAnalyze = new BufferedWriter(fwAnalyze);
-                        outPutAnalyze.write("Image Name\tSkeleton number\tBranch number\tTotal Branch Length\tTotal Edge Length\tNucleus number\n");
+                        outPutAnalyze.write("Image Name\tSkeleton number\tBranch number\tSum of average branch length\tTotal skeleton Length\tNucleus number\n");
                     }
 
                     reader.setSeries(0);

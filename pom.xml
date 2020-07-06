@@ -37,14 +37,14 @@
 	<properties>
             <imagej.app.directory>/opt/Fiji.app/</imagej.app.directory>
             <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-            <main-class>Astro_Hep863.jar</main-class>
+            <main-class>Cytodex_Fluo3D.jar</main-class>
 	</properties>
 
 	<dependencies>
             <dependency>
                 <groupId>net.imagej</groupId>
                 <artifactId>ij</artifactId>
-                <version>1.50g</version>
+                <version>1.52v</version>
                 <type>jar</type>
             </dependency>
             <dependency>
