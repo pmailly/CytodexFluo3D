@@ -686,12 +686,12 @@ public static void removeSmallBranches(ImagePlus img, ImageStack imgLab, Skeleto
         
       
     // Calculate lenght of branches after skeletonize
-    public static void analyzeSkel (ImagePlus img, BufferedWriter output) {
+    public static void analyzeSkel (ImagePlus img, BufferedWriter output, double smallBranch) {
 	String imgTitle = img.getTitle();
         AnalyzeSkeleton_ analyzeSkeleton = new AnalyzeSkeleton_();
         AnalyzeSkeleton_.calculateShortestPath = true;
         analyzeSkeleton.setup("",img);
-        SkeletonResult skeletonResults = analyzeSkeleton.run(AnalyzeSkeleton_.NONE, false, true, null, true, false);
+        SkeletonResult skeletonResults = analyzeSkeleton.run(AnalyzeSkeleton_.NONE, false, true, null, true, true);
         ImageStack imgStackLab = analyzeSkeleton.getLabeledSkeletons();
         skeletonResults = pruneEndBranches(img.getStack(), imgStackLab, skeletonResults, smallBranch);
         // remove small branches

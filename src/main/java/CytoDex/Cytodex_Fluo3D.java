@@ -115,7 +115,7 @@ public class Cytodex_Fluo3D implements PlugIn {
                     } 
                     else {  
                         // Analyze skeleton
-                        analyzeSkel(imgSkelDOG,outputAnalyze);
+                        analyzeSkel(imgSkelDOG,outputAnalyze, smallBranch);
 
                         // compute image map
                         ImageFloat imgMapDOG = localThickness3D(imgC1DOG);
