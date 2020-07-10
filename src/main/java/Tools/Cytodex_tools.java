@@ -697,6 +697,7 @@ public static void removeSmallBranches(ImagePlus img, ImageStack imgLab, Skeleto
         // remove small branches
         IJ.showStatus("Removing small branches...");
         for (int i = 0; i < 5; i++) {
+            IJ.showStatus("Removing small branches step "+(i+1));
             removeSmallBranches(img, imgStackLab, skeletonResults);
             analyzeSkeleton.setup("",img);
             skeletonResults = analyzeSkeleton.run(AnalyzeSkeleton_.NONE, false, true, null, true, false);
@@ -719,7 +720,10 @@ public static void removeSmallBranches(ImagePlus img, ImageStack imgLab, Skeleto
             try {
                 if (branchNumbers[i] != 0) {
                     // write data
-                    output.write(imgTitle + "\t" + (i+1) + "\t" + branchNumbers[i] + "\t" + junctions[i] + "\t" + nbEndPoints[i] + "\t" + branchLengths[i] + "\n");
+                    if (i == 0)
+                        output.write(imgTitle + "\t" + (i+1) + "\t" + branchNumbers[i] + "\t" + junctions[i] + "\t" + nbEndPoints[i] + "\t" + branchLengths[i] + "\n");
+                    else
+                        output.write("\t\t" + (i+1) + "\t" + branchNumbers[i] + "\t" + junctions[i] + "\t" + nbEndPoints[i] + "\t" + branchLengths[i] + "\n");
                     output.flush();
                 }
             } catch (IOException ex) {
