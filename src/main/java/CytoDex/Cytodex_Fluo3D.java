@@ -1,6 +1,6 @@
 package CytoDex;
 
-//  This plugin extract branches of spherois and compute lengths branching ...
+//  This plugin extract branches of spheroids and compute lengths branching ...
 
 
 import static Tools.Cytodex_tools.*;
@@ -8,22 +8,26 @@ import ij.IJ;
 import ij.ImagePlus;
 import ij.gui.Roi;
 import ij.io.Opener;
+import ij.measure.Calibration;
 import ij.measure.ResultsTable;
 import ij.plugin.ChannelSplitter;
 import ij.plugin.Duplicator;
 import ij.plugin.PlugIn;
 import static ij.plugin.filter.Analyzer.getResultsTable;
+import ij.process.AutoThresholder;
 import ij.process.ImageStatistics;
 import java.io.*;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import mcib3d.image3d.ImageFloat;
+import mcib3d.image3d.ImageHandler;
 
 
 public class Cytodex_Fluo3D implements PlugIn {
     
     public Roi roi = null;
-	
+    private Calibration cal = new Calibration();
+    private double smallBranch = 25;
+    private int interPruning =5;
     
 
      /**
@@ -115,16 +119,16 @@ public class Cytodex_Fluo3D implements PlugIn {
                     } 
                     else {  
                         // Analyze skeleton
-                        analyzeSkel(imgSkelDOG,outputAnalyze, smallBranch);
+                        analyzeSkel(imgSkelDOG,outputAnalyze, imgOutDir, smallBranch, interPruning);
 
                         // compute image map
-                        ImageFloat imgMapDOG = localThickness3D(imgC1DOG);
+                        ImagePlus imgMapDOG = localThickness3D(imgC1DOG);
                         
                         // compute intersections
                         intersectionAnalysis(imgSkelDOG);
 
                         // compute mean diameter and intersections from concentric spheres
-                        diameterAnalysis(imgSkelDOG, imgMapDOG);
+                        diameterAnalysis(imgSkelDOG, ImageHandler.wrap(imgMapDOG));
 
                         // find nucleus
                         removeSpheroid(imgC[1], 0);

@@ -11,6 +11,7 @@ import ij.Prefs;
 import ij.WindowManager;
 import ij.gui.WaitForUserDialog;
 import ij.io.FileSaver;
+import ij.measure.Calibration;
 import ij.plugin.Duplicator;
 import ij.plugin.PlugIn;
 import ij.plugin.RGBStackMerge;
@@ -50,7 +51,8 @@ public class Cytodex_Fluo3D_Lite implements PlugIn {
     private final double nucMaxVol = Double.MAX_VALUE;
     private String thresholdMethod = "Default";
     private int minBranchVol = 300;
-    
+    private static Calibration cal = new Calibration();
+    private static double smallBranch = 25;
     
     
     // Calculate lenght of branches after skeletonize
@@ -61,17 +63,15 @@ public class Cytodex_Fluo3D_Lite implements PlugIn {
         AnalyzeSkeleton_.calculateShortestPath = true;
         analyzeSkeleton.setup("",img);
         IJ.showStatus("Analyze skeleton...");
-        SkeletonResult skeletonResults = analyzeSkeleton.run(AnalyzeSkeleton_.NONE, false, true, null, true, false);
+        SkeletonResult skeletonResults = analyzeSkeleton.run(AnalyzeSkeleton_.NONE, false, false, null, true, false);
+        // remove small branches
+        IJ.showStatus("Removing small branches...");
+        for (int i = 0; i < 5; i++) {
+            pruneEndBranches(img.getStack(), skeletonResults, smallBranch);
+            analyzeSkeleton.setup("",img);
+            skeletonResults = analyzeSkeleton.run(AnalyzeSkeleton_.NONE, false, false, null, true, false);
+        }
         ImageStack imgStackLab = analyzeSkeleton.getLabeledSkeletons();
-        skeletonResults = pruneEndBranches(img.getStack(), imgStackLab, skeletonResults, smallBranch);
-//        // remove small branches
-//        IJ.showStatus("Removing small branches...");
-//        for (int i = 0; i < 5; i++) {
-//            removeSmallBranches(img, imgStackLab, skeletonResults);
-//            analyzeSkeleton.setup("",img);
-//            skeletonResults = analyzeSkeleton.run(AnalyzeSkeleton_.NONE, false, true, null, true, false);
-//        }
-
         //  compute parameters for each skeleton
         IJ.showStatus("Computing parameters for each skeleton ...");
         int[] branchNumbers = skeletonResults.getBranches();

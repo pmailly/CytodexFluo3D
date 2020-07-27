@@ -5,7 +5,6 @@
  */
 package Tools;
 
-import CytoDex.CytodexDSred_Fluo3D;
 import CytoDex.Cytodex_Fluo3D;
 import ij.IJ;
 import ij.ImagePlus;
@@ -35,27 +34,23 @@ import java.io.IOException;
 import static java.lang.Math.abs;
 import static java.lang.Math.round;
 import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.ListIterator;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import loci.formats.FormatException;
-import loci.plugins.util.ImageProcessorReader;
 import mcib3d.geom.ObjectCreator3D;
 import mcib3d.geom.Objects3DPopulation;
 import mcib3d.geom.Point3D;
 import mcib3d.geom.Voxel3D;
-import mcib3d.image3d.ImageFloat;
 import mcib3d.image3d.ImageHandler;
 import mcib3d.image3d.ImageInt;
 import mcib3d.image3d.ImageLabeller;
-import mcib3d.image3d.distanceMap3d.EDT;
 import sc.fiji.analyzeSkeleton.AnalyzeSkeleton_;
 import sc.fiji.analyzeSkeleton.Edge;
 import sc.fiji.analyzeSkeleton.Graph;
 import sc.fiji.analyzeSkeleton.Point;
 import sc.fiji.analyzeSkeleton.SkeletonResult;
-import sc.fiji.analyzeSkeleton.Vertex;
+import sc.fiji.localThickness.Clean_Up_Local_Thickness;
+import sc.fiji.localThickness.EDT_S1D;
+import sc.fiji.localThickness.Local_Thickness_Parallel;
 
 /**
  *
@@ -68,20 +63,18 @@ public class Cytodex_tools {
     public static int nbNucleus;   // total number of nucleus
     public static String imgOutDir;
     public static String fileNameWithOutExt;
-    public static Calibration cal = new Calibration();
     
     public static final int shollStep = 10;
     public static double cytoDexRad;
     public static int cytoDexCenterZ;
     public static int cytoDexCenterX;
     public static int cytoDexCenterY;
-    public static int progressCounter;
-    public static final int smallBranch = 25;
     public static double cytoDexEnlarge = 0;    // thickness to enlarge cytoDexRad
     public static double minThreshold_Nucleus = 0;
     public static double maxThreshold_Nucleus = 0;
     private static double minThreshold_Vessel = 0;
     private static double maxThreshold_Vessel = 0;
+    
     
     /**
      * Returns an IndexColorModel similar to MATLAB's jet color map.
@@ -209,6 +202,7 @@ public class Cytodex_tools {
         // Find center position of cytodex measuring max area of detected object
         IJ.showStatus("Finding bead");
         ImagePlus imgDup = img.duplicate();
+        Calibration cal = imgDup.getCalibration();
         imgDup.setCalibration(cal);
         IJ.run(imgDup, "Gaussian Blur...", "radius=4 stack");
         if (roi != null) {
@@ -280,6 +274,7 @@ public class Cytodex_tools {
     Crop Z stack
     */
     public static void cropStack(ImagePlus img, String dir) {
+        Calibration cal = img.getCalibration();
         double cropZ = round(abs((cytoDexCenterZ - cytoDexRad/cal.pixelDepth) - 1));
         //System.out.println("removing slices from 1 to "+cropZ+ " stack size = "+img.getNSlices());
         for (int z = 1; z <= cropZ; z++) {
@@ -410,43 +405,13 @@ public class Cytodex_tools {
         }
     }
     
-    /**
-     * Read channels
-     * @param r
-     * @param width
-     * @param height
-     * @param channel
-     * @param name
-     * @param series
-     * @return 
-     */
-     public static ImagePlus readChannel(ImageProcessorReader r, int width, int height, int channel, String name, String series) {
-        ImageStack stack = new ImageStack(width, height);
-        for (int n = channel; n < r.getImageCount(); n+=r.getSizeC()) {
-            ImageProcessor ip = null;
-            try {
-                try {
-                    ip = r.openProcessors(n)[0];
-                } catch (FormatException ex) {
-                    Logger.getLogger(CytodexDSred_Fluo3D.class.getName()).log(Level.SEVERE, null, ex);
-                }
-            } catch (IOException ex) {
-                Logger.getLogger(CytodexDSred_Fluo3D.class.getName()).log(Level.SEVERE, null, ex);
-            }
-            IJ.showStatus("reading channel "+channel+" ...");
-            IJ.showProgress(n, r.getImageCount());
-            stack.addSlice("" + (n + 1), ip);
-        }
-        ImagePlus imgStack = new ImagePlus(name+"_"+series, stack);
-        imgStack.setCalibration(cal);
-        return imgStack;
-    } 
     
     /*
     * clear inside cytodex
     */
     public static void removeSpheroid(ImagePlus img, int color) {
         IJ.showStatus("Removing bead ...");
+        Calibration cal = img.getCalibration();
         ObjectCreator3D sphereC0 = new ObjectCreator3D(img.getStack());
         double sphereRad = (cytoDexRad  + cytoDexEnlarge) / cal.pixelWidth;
         //System.out.println("sphere rad = " + (cytoDexRad  + cytoDexEnlarge));
@@ -454,28 +419,43 @@ public class Cytodex_tools {
         img.updateAndDraw();
     } 
     
-    // compute local thickness
-    public  static ImageFloat localThickness3D (ImagePlus imgMask) {
-        String imgTitle = imgMask.getTitle();
-        IJ.showStatus("Computing local thickness ...");
-        Objects3DPopulation vessel = getPopFromImage(imgMask);        
-        // Save tagged image   
-        ImageInt img = ImageInt.wrap(imgMask);
-        ImageHandler imgObjects = img.createSameDimensions();
-        imgObjects.set332RGBLut();
-        vessel.draw(imgObjects, 253);
-        ImagePlus imgObj = imgObjects.getImagePlus();
-        imgObj.setCalibration(cal);
-        FileSaver imgObjectsSave = new FileSaver(imgObj);
-        imgObjectsSave.saveAsTiff(imgOutDir+imgTitle+"_cytodexMask.tif");
-        // EVF spindle info 
-        ImageFloat edtObjects = EDT.run(imgObjects, 1, (float) cal.pixelWidth, (float) cal.pixelDepth, false, Prefs.getThreads());
-        imgObjects.flush();
-        imgObjects.closeImagePlus();
-        imgObj.changes = false;
-        imgObj.close();
-        imgObj.flush();
-        return(edtObjects);
+/**
+     * compute local thickness
+     * @param imgMask
+     * @return imgMap
+    **/
+    public static ImagePlus localThickness3D (ImagePlus imgMask) {
+        Calibration cal = imgMask.getCalibration();
+        ImagePlus img = imgMask.duplicate();
+        img.setCalibration(cal);
+        EDT_S1D edt = new EDT_S1D();
+        edt.runSilent = true;
+        edt.thresh = 1;
+        edt.inverse = false;
+        edt.showOptions = false;
+        edt.setup("", img);
+        edt.run(img.getProcessor());
+        ImagePlus imgEDT = edt.getResultImage();
+        imgEDT.setCalibration(cal);
+        Local_Thickness_Parallel locThk = new Local_Thickness_Parallel();
+        locThk.runSilent = true;
+        locThk.setup("", imgEDT);
+        locThk.run(imgEDT.getProcessor());
+        ImagePlus imgLocThk = locThk.getResultImage();
+        imgLocThk.setCalibration(cal);
+        Clean_Up_Local_Thickness cleanUp = new Clean_Up_Local_Thickness();
+        cleanUp.runSilent = true;
+        cleanUp.setup("", imgLocThk);
+        cleanUp.run(imgLocThk.getProcessor());
+        ImagePlus imgMap = cleanUp.getResultImage();
+        // calibrate intensity to µm
+        cal.setValueUnit("µm");
+        imgMap.setCalibration(cal);
+        IJ.run(imgMap, "Multiply...", "value="+cal.pixelWidth+" stack");
+        img.close();
+        imgEDT.close();
+        imgLocThk.close();
+        return(imgMap);
     }
 
     /*
@@ -494,6 +474,7 @@ public class Cytodex_tools {
     /* 
     */
     public static Objects3DPopulation findNucleus(ImagePlus imgNuc, Roi roi, int first) throws IOException {
+        Calibration cal = imgNuc.getCalibration();
         String imgTitle = imgNuc.getTitle();
         IJ.run(imgNuc, "Difference of Gaussians", "  sigma1=10 sigma2=5 stack");
     // threshold image                        
@@ -559,151 +540,63 @@ public class Cytodex_tools {
 	 * Prune end branches of a specific length
 	 *
 	 * @param stack input skeleton image
-	 * @param SkeletonResults
+	 * @param results
 	 * @param length limit length to prune the branches (in calibrated units)
 	 *
 	 */
-    public static SkeletonResult pruneEndBranches(ImageStack stack, ImageStack imgLab, SkeletonResult results, double length) {
-        Graph[] g = results.getGraph();
-        for (int t = 0; t < results.getNumOfTrees(); t++) {
-            ArrayList<Vertex> vertices = g[t].getVertices();
-            ListIterator<Vertex> vit = vertices.listIterator();
-            while (vit.hasNext()) {
-                Vertex v = vit.next();
-                if (v.getBranches().size() == 1 && v.getBranches().get(0).getLength() <= length) {
-                    // Remove end point voxels
-                    ArrayList<Point> points = v.getPoints();
-                    final int nPoints = points.size();
-                    for (int i = 0; i < nPoints; i++) {
-                        Point p = points.get(i);
-                        stack.setVoxel(p.x, p.y, p.z, 0);
-                        imgLab.setVoxel(p.x, p.y, p.z, 0);
-                        results.getEndPoints()[t]--;
-                        results.getJunctions()[t]--;
-                        Iterator<Point> pit = results.getListOfEndPoints().listIterator();
-                        while (pit.hasNext()) {
-                            Point ep = pit.next();
-                            if (ep.equals(p)){
-                                    pit.remove();
-                                    break;
-                            }
-                        }
-                    }
-
-                    // Remove branch voxels
-                    Edge branch = v.getBranches().get(0);
-                    points = branch.getSlabs();
-                    final int nSlabs = points.size();
-                    for (int i = 0; i < nSlabs; i++) {
-                        Point p = points.get(i);
-                        stack.setVoxel(p.x, p.y, p.z, 0);
-                        imgLab.setVoxel(p.x, p.y, p.z, 0);
-                        results.getSlabs()[t]--;
-                        //this.totalNumberOfSlabs--;
-                        Iterator<Point> pit = results.getListOfSlabVoxels().listIterator();
-                        while (pit.hasNext()) {
-                            Point ep = pit.next();
-                            if (ep.equals(p)){
-                                    pit.remove();
-                                    break;
-                            }
-                        }
-                    }
-
-                    // remove the Edge from the Graph
-                    ArrayList<Edge> gEdges = g[t].getEdges();
-                    Iterator<Edge> git = gEdges.listIterator();
-                    while (git.hasNext()) {
-                        Edge e = git.next();
-                        if (e.equals(branch))
-                        {
-                                git.remove();
-                                break;
-                        }
-                    }
-
-                    // remove the Edge from the opposite Vertex
-                    Vertex opp = branch.getOppositeVertex(v);
-                    ArrayList<Edge> oppBranches = opp.getBranches();
-                    Iterator<Edge> oppIt = oppBranches.listIterator();
-                    while (oppIt.hasNext()) {
-                        Edge oppBranch = oppIt.next();
-                        if (oppBranch.equals(branch))
-                        {
-                                oppIt.remove();
-                                break;
-                        }
-                    }
-
-                    // remove the Edge from the Vertex
-                    v.getBranches().remove(0);
-
-                    // remove the Vertex from the Graph
-                    vit.remove();
-                }
-            }
-        }
-        results.setGraph(g);
-        return(results);
-    }
-
-
-// remove small branches 
-public static void removeSmallBranches(ImagePlus img, ImageStack imgLab, SkeletonResult skeletonResults) {
-    Graph[] graph = skeletonResults.getGraph();
-    ArrayList<Point> endPoints = skeletonResults.getListOfEndPoints();
-    ArrayList<Point> p1;
-    ArrayList<Point> p2;
-    boolean v1End;
-    boolean v2End;
-    ArrayList<Edge> listEdges;
-    for (int i = 0; i < graph.length; i++) {
-        listEdges = graph[i].getEdges(); 
-        for (Edge e : listEdges) {
-            p1 = e.getV1().getPoints();
-            v1End = endPoints.contains(p1.get(0));
-            p2 = e.getV2().getPoints();
-            v2End = endPoints.contains(p2.get(0));
-            if (v1End || v2End) {
-                if (e.getLength() < smallBranch) {
-                    if (v1End) {
-                        img.getStack().setVoxel(p1.get(0).x, p1.get(0).y, p1.get(0).z, 0); 
-                        imgLab.setVoxel(p1.get(0).x, p1.get(0).y, p1.get(0).z, 0);
-                    }
-                    if (v2End) {
-                        img.getStack().setVoxel(p2.get(0).x, p2.get(0).y, p2.get(0).z, 0); 
-                        imgLab.setVoxel(p2.get(0).x, p2.get(0).y, p2.get(0).z, 0);
-                    }
-                    for (Point p : e.getSlabs()) {
-                        img.getStack().setVoxel(p.x, p.y, p.z, 0);
-                        imgLab.setVoxel(p.x, p.y, p.z, 0);
+    public static ImagePlus pruneEndBranches(ImageStack stack, SkeletonResult results, double length) {
+        Graph[] graph = results.getGraph();
+        ArrayList<Point> endPoints = results.getListOfEndPoints();
+        for (int i = 0; i < graph.length; i++) {
+            ArrayList<Edge> listEdges = graph[i].getEdges();
+ 
+            // go through all branches and remove branches under threshold
+            // in duplicate image
+            for (Edge e : listEdges) {
+                ArrayList<Point> p = e.getV1().getPoints();
+                boolean v1End = endPoints.contains(p.get(0));
+                ArrayList<Point> p2 = e.getV2().getPoints();
+                boolean v2End = endPoints.contains(p2.get(0));
+                // if any of the vertices is end-point 
+                if (v1End || v2End) {
+                    if (e.getLength() < length) {
+                        if (v1End)
+                            stack.setVoxel(p.get(0).x, p.get(0).y, p.get(0).z, 0);
+                        if (v2End)
+                            stack.setVoxel(p2.get(0).x, p2.get(0).y, p2.get(0).z, 0);
+                        for (Point pt : e.getSlabs())
+                            stack.setVoxel(pt.x, pt.y, pt.z, 0);
                     }
                 }
             }
         }
+        return(new ImagePlus("", stack));
     }
-}
+
+
+
         
       
     // Calculate lenght of branches after skeletonize
-    public static void analyzeSkel (ImagePlus img, BufferedWriter output, double smallBranch) {
-	String imgTitle = img.getTitle();
+    public static void analyzeSkel (ImagePlus img, BufferedWriter output, String outDir, double smallBranch, int iterPruning) {
+	Calibration cal = img.getCalibration();
+        String imgTitle = img.getTitle();
         AnalyzeSkeleton_ analyzeSkeleton = new AnalyzeSkeleton_();
         AnalyzeSkeleton_.calculateShortestPath = true;
         analyzeSkeleton.setup("",img);
         SkeletonResult skeletonResults = analyzeSkeleton.run(AnalyzeSkeleton_.NONE, false, true, null, true, true);
-        ImageStack imgStackLab = analyzeSkeleton.getLabeledSkeletons();
-        skeletonResults = pruneEndBranches(img.getStack(), imgStackLab, skeletonResults, smallBranch);
         // remove small branches
         IJ.showStatus("Removing small branches...");
-        for (int i = 0; i < 5; i++) {
-            IJ.showStatus("Removing small branches step "+(i+1));
-            removeSmallBranches(img, imgStackLab, skeletonResults);
-            analyzeSkeleton.setup("",img);
-            skeletonResults = analyzeSkeleton.run(AnalyzeSkeleton_.NONE, false, true, null, true, false);
+        for (int i = 0; i < iterPruning; i++) {
+            IJ.showStatus("Removing small branches step "+(i+1)+"/"+iterPruning);
+            ImagePlus imgPrune = pruneEndBranches(img.getStack(), skeletonResults, smallBranch);
+            analyzeSkeleton.setup("",imgPrune);
+            skeletonResults = analyzeSkeleton.run(AnalyzeSkeleton_.NONE, false, false, null, true, false);
+            //System.out.println("length = "+ skeletonResults.getBranches().length);
         }
-
+        
         //  compute parameters for each skeleton
+        ImageStack imgStackLab = analyzeSkeleton.getLabeledSkeletons();
         IJ.showStatus("Computing parameters for each skeleton ...");
         ImagePlus imgLab = new ImagePlus(imgTitle+"_LabelledSkel.tif", imgStackLab);
         ImagePlus imgLabProj = doZProjection(imgLab);
@@ -714,6 +607,9 @@ public static void removeSmallBranches(ImagePlus img, ImageStack imgLab, Skeleto
         imgLab.flush();   
         int[] branchNumbers = skeletonResults.getBranches();
         double[] branchLengths = skeletonResults.getAverageBranchLength();
+        double[] totalLengths = new double[branchLengths.length];
+        for (int b = 0; b <  branchLengths.length; b++)
+            totalLengths[b] += branchNumbers[b] * branchLengths[b];
         int[] nbEndPoints = skeletonResults.getEndPoints();
         int[] junctions = skeletonResults.getJunctions();
         for (int i = 0; i < skeletonResults.getGraph().length; i++) {
@@ -721,9 +617,9 @@ public static void removeSmallBranches(ImagePlus img, ImageStack imgLab, Skeleto
                 if (branchNumbers[i] != 0) {
                     // write data
                     if (i == 0)
-                        output.write(imgTitle + "\t" + (i+1) + "\t" + branchNumbers[i] + "\t" + junctions[i] + "\t" + nbEndPoints[i] + "\t" + branchLengths[i] + "\n");
+                        output.write(imgTitle + "\t" + (i+1) + "\t" + branchNumbers[i] + "\t" + junctions[i] + "\t" + nbEndPoints[i] + "\t" + totalLengths[i] + "\n");
                     else
-                        output.write("\t\t" + (i+1) + "\t" + branchNumbers[i] + "\t" + junctions[i] + "\t" + nbEndPoints[i] + "\t" + branchLengths[i] + "\n");
+                        output.write("\t" + (i+1) + "\t" + branchNumbers[i] + "\t" + junctions[i] + "\t" + nbEndPoints[i] + "\t" + totalLengths[i] + "\n");
                     output.flush();
                 }
             } catch (IOException ex) {
@@ -732,7 +628,7 @@ public static void removeSmallBranches(ImagePlus img, ImageStack imgLab, Skeleto
         }
 
         FileSaver imgSave = new FileSaver(imgLabProj);
-        imgSave.saveAsTiff(imgOutDir+imgTitle.substring(0,imgTitle.indexOf(".tif"))+"_LabelledSkel.tif");
+        imgSave.saveAsTiff(outDir+imgTitle.substring(0,imgTitle.indexOf(".tif"))+"_LabelledSkel.tif");
         imgLabProj.changes = false;
         imgLabProj.close();  
         imgLabProj.flush();  
@@ -751,6 +647,7 @@ public static void removeSmallBranches(ImagePlus img, ImageStack imgLab, Skeleto
     }
     
     public static void intersectionAnalysis(ImagePlus img) throws IOException {
+        Calibration cal = img.getCalibration();
         String imgTitle = img.getTitle();
         final int n_cpus = Prefs.getThreads();
         int dx = (cytoDexCenterX <= img.getWidth()/2) ? (cytoDexCenterX-img.getWidth()) : cytoDexCenterX;
@@ -789,6 +686,7 @@ public static void removeSmallBranches(ImagePlus img, ImageStack imgLab, Skeleto
     // For each skeleton calculate mean diameter inside sphere from cytodex center using image map
     // compute number of intersections
     public static void diameterAnalysis (ImagePlus imgSkel, ImageHandler imgMap) throws IOException {
+        Calibration cal = imgSkel.getCalibration();
         String imgTitle = imgSkel.getTitle();
         // parameters
         final int wdth = imgSkel.getWidth();

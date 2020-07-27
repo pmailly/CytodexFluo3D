@@ -2,19 +2,19 @@ package CytoDex;
 
 //  This plugin Analyze nucleus spheroids repartition ...
 
-import static CytoDex.Cytodex_Fluo3D_Lite.analyzeSkeleton;
+import Tools.Cytodex_Actin;
 import static Tools.Cytodex_tools.*;
+import Tools.Cytodex_Nucleus;
 import fiji.util.gui.GenericDialogPlus;
 import ij.IJ;
 import ij.ImagePlus;
-import ij.Prefs;
-import ij.WindowManager;
 import ij.gui.WaitForUserDialog;
 import ij.io.FileSaver;
 import ij.measure.Calibration;
 import ij.plugin.Duplicator;
 import ij.plugin.PlugIn;
-import ij.plugin.frame.ThresholdAdjuster;
+import ij.plugin.RGBStackMerge;
+import ij.process.AutoThresholder;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -32,21 +32,15 @@ import loci.plugins.BF;
 import loci.plugins.in.ImporterOptions;
 import loci.plugins.util.ImageProcessorReader;
 import mcib3d.geom.Object3D;
-import mcib3d.geom.Object3DVoxels;
 import mcib3d.geom.ObjectCreator3D;
 import mcib3d.geom.Objects3DPopulation;
 import mcib3d.geom.Point3D;
-import mcib3d.geom.Voxel3D;
-import mcib3d.image3d.ImageFloat;
+import mcib3d.geom.Vector3D;
 import mcib3d.image3d.ImageHandler;
 import mcib3d.image3d.ImageInt;
 import mcib3d.image3d.ImageLabeller;
-import mcib3d.image3d.distanceMap3d.EDT;
-import mcib3d.utils.ArrayUtil;
 import org.apache.commons.io.FilenameUtils;
-import sc.fiji.localThickness.Clean_Up_Local_Thickness;
-import sc.fiji.localThickness.EDT_S1D;
-import sc.fiji.localThickness.Local_Thickness_Parallel;
+import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
 
 
 public class Cytodex_Fluo3D_Nucleus implements PlugIn {
@@ -56,12 +50,14 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
     private BufferedWriter outPutAnalyze, outPutGlobalNucleus, outPutNucleus, outPutActin;
     private double nucMinVol = 150;
     private final double nucMaxVol = Double.MAX_VALUE;
-    private String thresholdMethod = "Default";
     private int shollStart = 100;
     private int shollStep = 50;
     private double actinMinVol = 1000;
     private double actinMinLength = 25;
-    private final double actinColoc = 50;
+    private int iterPruning = 5;
+    private double actinColoc = 30;
+    public Calibration cal = new Calibration();
+    
     
    
     
@@ -77,7 +73,9 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
        gd.addNumericField("Step diameter", shollStep, 2);
        gd.addNumericField("Actin minimum volume : ", actinMinVol);
        gd.addNumericField("Actin minimum branch length : ", actinMinLength);
+       gd.addNumericField("Iteration number to prune : ", iterPruning);
        gd.addNumericField("Nucleus minimum volume : ", nucMinVol);
+       gd.addNumericField("% Coloc Nucleus in Actin\n (zero = one voxel colocalized): ", actinColoc);
        gd.showDialog();
        if (gd.wasCanceled())
             canceled = true;
@@ -86,7 +84,9 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
        shollStep = (int)gd.getNextNumber();
        actinMinVol = gd.getNextNumber();
        actinMinLength = gd.getNextNumber();
+       iterPruning = (int)gd.getNextNumber();
        nucMinVol = gd.getNextNumber();
+       actinColoc = gd.getNextNumber();
        return(canceled);
     }
     
@@ -105,42 +105,6 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
         return pop;
     }
     
-   
-        
-        // Threshold images and fill holes
-    private static void threshold(ImagePlus img, String thMed, boolean fill, boolean calcul) {
-        //  Threshold and binarize
-       String cal = "";
-       img.setZ(img.getNSlices()/2);
-       img.updateAndDraw();
-       IJ.setAutoThreshold(img, thMed+" dark");
-       Prefs.blackBackground = false;
-       if (calcul)
-           cal = " calculate";
-        IJ.run(img, "Convert to Mask", "method="+thMed+cal+" background=Dark");
-        if (fill) {
-            IJ.run(img,"Fill Holes", "stack");
-        }
-    }
-    
-    private double[] findVolOfColoc(Object3D obj, Objects3DPopulation pop) {
-        double vol = 0;
-        double index = -1;
-        for (int o = 0; o < pop.getNbObjects(); o++) {
-            Object3D actinObj = pop.getObject(o);
-            int coloc = obj.getColoc(actinObj);
-            if (coloc >= actinColoc) {
-                vol = actinObj.getVolumeUnit();
-                index = o;
-                break;
-            }
-        }
-        double[] p = {index, vol};
-        return(p);
-    }
-    
-    
-    
     
     /**
      * Find nucleus inside dist2-dist1
@@ -149,23 +113,19 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
      * @param center
      * @param rad
      * @param radOffset
-     * @return nucleus included in a volume a distance rad + offset and add volume actin object
+     * @return nucleus included inside dist2-dist1
      */
-    private Objects3DPopulation nucleusInsideDistance(Objects3DPopulation nucPop, Objects3DPopulation actinPop, Point3D center, double dist1, double dist2) {
-        Objects3DPopulation popInside = new Objects3DPopulation();
-        for (int o = 0; o < nucPop.getNbObjects(); o++) {
-            Object3D obj = nucPop.getObject(o);
-            double dist = obj.distPixelCenter(center);
-            if (dist < dist2 && dist >= dist1) {
-                double[] actinparams = findVolOfColoc(obj, actinPop);
-                obj.setName(dist + "," + actinparams[0]);
-                obj.setValue((int) actinparams[1]);
-                popInside.addObject(obj);
-                nucPop.removeObject(obj);
-                o--;
+    private ArrayList<Cytodex_Nucleus> nucleusInsideDistance(ArrayList<Cytodex_Nucleus> nucList, double dist1, double dist2) {
+        ArrayList<Cytodex_Nucleus> nucInsideList = new ArrayList<>();
+        ArrayList<Cytodex_Nucleus> nucInsideTmp = (ArrayList<Cytodex_Nucleus>)nucList.clone();
+        for (int i = 0; i < nucInsideTmp.size(); i++) {
+            double distObj = nucInsideTmp.get(i).getCenterDistToCenter();
+            if (distObj >= dist1 && distObj < dist2) {
+                nucInsideList.add(nucInsideTmp.get(i));
+                nucInsideTmp.remove(i);
             }
         }
-        return(popInside);
+        return(nucInsideList);
     }
     
     
@@ -188,7 +148,7 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
         dz = (centroid.getRoundZ()  <= depth / 2) ? (centroid.getRoundZ()  - depth) * vxD : centroid.getRoundZ()  * vxD;
         maxEndRadius = Math.sqrt(dx * dx + dy * dy + dz * dz);
         // Calculate how many samples will be taken
-        final int samples = (int) ((maxEndRadius - cytoDexRad) / shollStep) + 1;
+        final int samples = (int) ((maxEndRadius - start) / shollStep) + 1;
         return(samples);
     }
     
@@ -206,88 +166,218 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
      * 
      * 
     */
-     private ArrayList<double[]> actinParameters (Objects3DPopulation actinPop, ImagePlus img, String out, String name, String series) {
+     private ArrayList<Cytodex_Actin> actinParameters (Objects3DPopulation actinPop, Point3D center, ImagePlus img, String out, String name, String series) {
         ImageHandler imhActinObjects = ImageInt.wrap(img).createSameDimensions();
-        Object3D actinTotalObj = getAllObjectsInOne(actinPop, imhActinObjects);
-        Point3D ptCenter = actinTotalObj.getCenterAsPoint();
-        ArrayList<double[]> actinParam = new ArrayList<>();
-        for (int o = 0; o < actinPop.getNbObjects(); o++) {
-            Object3D actinObj = actinPop.getObject(o);
-            double dist = actinObj.distPixelCenter(ptCenter);
+        ArrayList<Cytodex_Actin> actinParams = new ArrayList<>();
+        int index = 1;
+        for (int n = 0; n < actinPop.getNbObjects(); n++) {
+            Object3D actinObj = actinPop.getObject(n);
+            double distCenter = actinObj.distPixelCenter(center);
+            double distBorder = actinObj.distPixelBorderUnit(center.x, center.y, center.z);
             double vol = actinObj.getVolumeUnit();
-            actinObj.draw(imhActinObjects, (o+1));
-            double[] params = {dist, vol};
-            actinParam.add(params);
+            actinObj.draw(imhActinObjects, index);
+            Cytodex_Actin actin = new Cytodex_Actin(index, vol, distCenter, distBorder, 0);
+            actinParams.add(actin);
+            index++;
         } 
         imhActinObjects.set332RGBLut();
         imhActinObjects.setTitle(name + "_" + series + "_ActinObjects.tif");
         imhActinObjects.save(out);
         imhActinObjects.closeImagePlus();
-        return(actinParam);
+        return(actinParams);
      }
     
     
     /**
-     * Find either volume object or volume of coloc object
-     * @param pop
-     * @return 
+     * Find nucleus number in actin object
+     * @param nucPop
+     * @param actinPop
+     * @return nucleusNumber
      */
     
-    private double[] getMeanVolume(Objects3DPopulation pop, boolean coloc) {
-        ArrayUtil vol = new ArrayUtil(pop.getNbObjects());
-        double[] volume = new double[2];
-        for (int o = 0; o < pop.getNbObjects(); o++) {
-            Object3D obj = pop.getObject(o);
-            if (coloc)
-                vol.addValue(o, obj.getValue());
-            else
-                vol.addValue(o, obj.getVolumeUnit());
+    private void findNucleusInActin(Objects3DPopulation actinPop, Objects3DPopulation nucPop, ArrayList<Cytodex_Actin> actin) {
+        for (int n = 0; n < actinPop.getNbObjects(); n++) {
+            Object3D actinObj = actinPop.getObject(n);
+            int nuc = 0;
+            for (int i = 0; i < nucPop.getNbObjects(); i++) {
+                Object3D nucObj = nucPop.getObject(i);
+                if (actinObj.hasOneVoxelColoc(nucObj))
+                    nuc++;
+            }
+            actin.get(n).setNucNumber(nuc);
         }
-        volume[0] = vol.getMean();
-        volume[1] = vol.getStdDev();
-        return(volume);
-    }
- 
-    /**
-     * compute local thickness
-     * @param imgAstro
-     * @return astroMap
-    **/
-    public ImagePlus localThickness3D (ImagePlus imgMask) {
-        Calibration cal = imgMask.getCalibration();
-        ImagePlus img = imgMask.duplicate();
-        img.setCalibration(cal);
-        threshold(img, "Li", false, false);
-        EDT_S1D edt = new EDT_S1D();
-        edt.runSilent = true;
-        edt.thresh = 1;
-        edt.inverse = false;
-        edt.showOptions = false;
-        edt.setup("", img);
-        edt.run(img.getProcessor());
-        ImagePlus imgEDT = edt.getResultImage();
-        imgEDT.setCalibration(cal);
-        Local_Thickness_Parallel locThk = new Local_Thickness_Parallel();
-        locThk.runSilent = true;
-        locThk.setup("", imgEDT);
-        locThk.run(imgEDT.getProcessor());
-        ImagePlus imgLocThk = locThk.getResultImage();
-        imgLocThk.setCalibration(cal);
-        Clean_Up_Local_Thickness cleanUp = new Clean_Up_Local_Thickness();
-        cleanUp.runSilent = true;
-        cleanUp.setup("", imgLocThk);
-        cleanUp.run(imgLocThk.getProcessor());
-        ImagePlus astroMap = cleanUp.getResultImage();
-        // calibrate intensity to µm
-        cal.setValueUnit("µm");
-        astroMap.setCalibration(cal);
-        IJ.run(astroMap, "Multiply...", "value="+cal.pixelWidth+" stack");
-        img.close();
-        imgEDT.close();
-        imgLocThk.close();
-        return(astroMap);
     }
     
+    
+    
+    private int actinIndex(Object3D nucObj, Objects3DPopulation actinPop) {
+        int actinNumber = -1;
+        int totalActin = actinPop.getNbObjects();
+        for (int n = 0; n < totalActin; n++) {
+            Object3D actinObj = actinPop.getObject(n);
+            if (actinColoc == 0) {
+                if (nucObj.hasOneVoxelColoc(actinObj)) {
+                    actinNumber = (n+1);
+                    n = totalActin;
+                }
+            }
+            else {
+                if (nucObj.getColoc(actinObj) >= actinColoc) {
+                    actinNumber = (n+1);
+                    n = totalActin;
+                }
+            }
+        }
+        return(actinNumber);
+    }
+    
+        
+    /**
+     * Find nucleus parameters
+     */
+    private ArrayList<Cytodex_Nucleus> nucleusParameters(Objects3DPopulation nucPop, Objects3DPopulation actinPop, Point3D centroid, ImagePlus actinMap) {
+        ArrayList<Cytodex_Nucleus> nucleusList = new ArrayList();
+        ImageHandler imhActin = ImageHandler.wrap(actinMap);
+        Vector3D centerVec = new Vector3D(centroid);
+        int index = 1;
+        for (int n = 0; n < nucPop.getNbObjects(); n++) {
+            Object3D nucObj = nucPop.getObject(n);
+            double vol = nucObj.getVolumeUnit();
+            double sph = nucObj.getSphericity(true);
+            double comp = nucObj.getCompactness(true);
+            double distCenter = nucObj.distPixelCenter(centroid);
+            double diam = nucObj.getPixCenterValue(imhActin);
+            Vector3D nucVec = nucObj.getMainAxis();
+            double angle = nucVec.angleDegrees(centerVec);
+            int actinNumber = actinIndex(nucObj, actinPop);
+            Object3D closestObj = nucPop.closestCenter(nucObj, true);
+            double closestDist = nucObj.distCenterUnit(closestObj);
+            Cytodex_Nucleus nucleus = new Cytodex_Nucleus(index, vol, distCenter, sph, comp, angle, actinNumber, closestDist, diam);
+            nucleusList.add(nucleus);
+            index++;
+        }
+        return(nucleusList);
+    }
+    
+    
+    /**
+     * Write parameters for each nucleus
+     * @param arg 
+     */
+    private void writeNucParameters(ArrayList<Cytodex_Nucleus> nucList, ImagePlus img, Point3D centroid, String name) throws IOException {
+        int shollSteps = shollStep(img, centroid, shollStart, shollStep);
+        int shollStop = shollStart + shollStep*shollSteps;
+        for (int d = shollStart; d < shollStop; d+=shollStep) {
+            int shollDiameter = d + shollStep;
+            ArrayList<Cytodex_Nucleus> inSphere = nucleusInsideDistance(nucList, d, shollDiameter);
+            if (inSphere.size() > 1) {
+                for (int n = 0; n < inSphere.size(); n++) {
+                    int index = inSphere.get(n).getIndex();
+                    double distToCenter = inSphere.get(n).getCenterDistToCenter();
+                    double closestDist = inSphere.get(n).getNucClosestDist();
+                    double volume = inSphere.get(n).getVolume();
+                    double sph = inSphere.get(n).getSphericity();
+                    double comp = inSphere.get(n).getCompactness();
+                    double angle = inSphere.get(n).getAngle();
+                    int actinObj = inSphere.get(n).getActinObjectIndex();
+                    double ActinDiameter = 2 *  inSphere.get(n).getActinDiameter();
+                    if (n == 0)
+                        outPutNucleus.write(name+"\t"+d+"-"+shollDiameter+"\t"+index+"\t"+distToCenter+"\t"+volume+"\t"+closestDist+"\t"+actinObj+"\t"
+                                +ActinDiameter+"\t"+sph+"\t"+comp+"\t"+angle+"\n");
+                    else
+                        outPutNucleus.write("\t\t"+index+"\t"+distToCenter+"\t"+volume+"\t"+closestDist+"\t"+actinObj+"\t"
+                                +ActinDiameter+"\t"+sph+"\t"+comp+"\t"+angle+"\n");
+                    outPutNucleus.flush();
+                }
+            }
+        }
+    }
+    
+    
+    /**
+     * 
+     */
+    private void writeNucleusGlobalParameters(ArrayList<Cytodex_Nucleus> nucleusList, Object3D nucObjs, ImagePlus imgNuc, Point3D centroid, String rootName) throws IOException {
+        double globalSphericity = nucObjs.getSphericity(true);
+        double globalCompactness = nucObjs.getCompactness(true);
+        Vector3D mainAxe = nucObjs.getMainAxis();
+        Vector3D center = new Vector3D(centroid);
+        double globalAngle = mainAxe.angle(center);
+        int shollSteps = shollStep(imgNuc, centroid, shollStart, shollStep);
+        int shollStop = shollStart + shollStep*shollSteps;
+        for (int d = shollStart; d < shollStop; d+=shollStep) {
+            int shollDiameter = d + shollStep;
+            DescriptiveStatistics allDist = new DescriptiveStatistics();
+            DescriptiveStatistics allVol = new DescriptiveStatistics();
+            DescriptiveStatistics allSph = new DescriptiveStatistics();
+            DescriptiveStatistics allComp = new DescriptiveStatistics();
+            DescriptiveStatistics allAngle = new DescriptiveStatistics();
+            ArrayList<Cytodex_Nucleus> inSphere = nucleusInsideDistance(nucleusList, d, shollDiameter);
+            boolean findNuc = false;
+            for (int n = 0; n < inSphere.size(); n++) {
+                if (inSphere.get(n).getCenterDistToCenter() >= d && inSphere.get(n).getCenterDistToCenter() < shollDiameter) {
+                    allDist.addValue(inSphere.get(n).getNucClosestDist());
+                    allVol.addValue(inSphere.get(n).getVolume());
+                    allSph.addValue(inSphere.get(n).getSphericity());
+                    allComp.addValue(inSphere.get(n).getCompactness());
+                    allAngle.addValue(inSphere.get(n).getAngle());
+                    findNuc = true;
+                }
+            }
+            if (findNuc) {
+                if (d == shollStart)
+                    outPutGlobalNucleus.write(rootName+"\t"+d+"-"+shollDiameter+"\t"+inSphere.size()+"\t"+allDist.getMean()+"\t"+allDist.getStandardDeviation()+"\t"
+                            +allVol.getMean()+"\t"+allVol.getStandardDeviation()+"\t"+allSph.getMean()+"\t"+allSph.getStandardDeviation()+"\t"+allComp.getMean()+"\t"
+                            +allComp.getStandardDeviation()+"\t"+allAngle.getMean()+"\t"+allAngle.getStandardDeviation()+"\t"+globalSphericity+"\t"+globalCompactness+"\t"+globalAngle+"\n");
+                else
+                    outPutGlobalNucleus.write("\t"+d+"-"+shollDiameter+"\t"+inSphere.size()+"\t"+allDist.getMean()+"\t"+allDist.getStandardDeviation()+"\t"
+                            +allVol.getMean()+"\t"+allVol.getStandardDeviation()+"\t"+allSph.getMean()+"\t"+allSph.getStandardDeviation()+"\t"+allComp.getMean()+"\t"
+                            +allComp.getStandardDeviation()+"\t"+allAngle.getMean()+"\t"+allAngle.getStandardDeviation()+"\t\t\t\n");
+            }
+            else
+                outPutGlobalNucleus.write("\t"+d+"-"+shollDiameter+"\t0\t\t\t\t\t\t\t\t\t\t\t\t\t\n");
+            outPutGlobalNucleus.flush();
+        }
+    }
+    
+    /*
+    * clear inside spheroid
+    */
+    public void removeSpheroid(ImagePlus img, int color, Point3D center) {
+        IJ.showStatus("Removing spheroid center ...");
+        Calibration cal = img.getCalibration();
+        ObjectCreator3D sphereC0 = new ObjectCreator3D(img.getStack());
+        double sphereRad = shollStart / cal.pixelWidth;
+        //System.out.println("sphere rad = " + shollStart + shollStep);
+        sphereC0.createEllipsoid(center.getRoundX(), center.getRoundY(), center.getRoundZ(), sphereRad, sphereRad, sphereRad/cal.pixelDepth, color, false);
+        img.updateAndDraw();
+    } 
+    
+    /**
+     * Save object Populations
+     * @param nucPop
+     * @param actinPop
+     * @param imageName
+     * @param img 
+     */
+    private void saveImgObjects(Objects3DPopulation nucPop, Objects3DPopulation actinPop, String imageName, ImagePlus img) {
+        //create image objects population
+        ImageHandler imgNucObj = ImageInt.wrap(img).createSameDimensions();
+        ImageHandler imgActinObj = ImageInt.wrap(img).createSameDimensions();
+        //nuc population green
+        nucPop.draw(imgNucObj, 255);
+        //vessel population red       
+        actinPop.draw(imgActinObj, 255);
+        
+        // save image for objects population
+        ImagePlus[] imgColors = {imgNucObj.getImagePlus(), imgActinObj.getImagePlus()};
+        ImagePlus imgObjects = new RGBStackMerge().mergeHyperstacks(imgColors, false);
+        imgObjects.setCalibration(cal);
+        FileSaver ImgObjectsFile = new FileSaver(imgObjects);
+        ImgObjectsFile.saveAsTiff(imageName + "_Objects.tif"); 
+        imgNucObj.closeImagePlus();
+        imgActinObj.closeImagePlus();
+    }
     
     @Override
     public void run(String arg) {
@@ -341,22 +431,25 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
                         // Global file for analyze skeleton results
                         FileWriter fwAnalyze = new FileWriter(outDirResults + "Skeleton_results.xls",false);
                         outPutAnalyze = new BufferedWriter(fwAnalyze);
-                        outPutAnalyze.write("Image\t#Skeletons\t#Branches\t#Junctions\t#End points\tBranch length\n");
+                        outPutAnalyze.write("Image\t#Skeletons\t#Branches\t#Junctions\t#End points\tTotal branch length\n");
                         
+                        // Global file for nucleus results
                         FileWriter fwNucleus = new FileWriter(outDirResults + "Global_Nucleus_results.xls",false);
                         outPutGlobalNucleus = new BufferedWriter(fwNucleus);
                         outPutGlobalNucleus.write("Image Name\tSphere diameter\tNumber of nucleus\tMean closest distance\tStd closest distance"
-                                + "\tNucleus mean Volume\tNucleus std volume\tActin mean volume\t Actin std volume\n");
+                                + "\tNucleus mean Volume\tNucleus std volume\tMean sphericity\tStd sphericity\tMean Compactness\tStd compactness"
+                                + "\tMean orientation\tStd orientation\tAll nucleus global Sphericity\tAll nucleus global compactness\tAll nucleus global angle\n");
                         
                         // file for analyze nucleus results
                         FileWriter fwEachNucleus = new FileWriter(outDirResults + "Nucleus_results.xls",false);
                         outPutNucleus = new BufferedWriter(fwEachNucleus);
-                        outPutNucleus.write("Image Name\tSphere diameter\t#Nucleus\tDistance from centroid\tNucleus Volume\t#Actin\tActin coloc volume\tActin diameter\n");
+                        outPutNucleus.write("Image Name\tSphere diameter\t#Nucleus\tDistance from centroid\tNucleus Volume\tDistance to closest nucleus"
+                                + "\t#Actin\tActin diameter\tSphericity\tCompactness\tOrientation\n");
                         
                         // file for analyze actin results
                         FileWriter fwEachActin = new FileWriter(outDirResults + "Actin_results.xls",false);
                         outPutActin = new BufferedWriter(fwEachActin);
-                        outPutActin.write("Image Name\t#Actin\tDistance from centroid\tActin Volume\n");
+                        outPutActin.write("Image Name\t#Actin\tCenter distance to centroid\tBorder distance to centroid\tActine volume\tNucleus number\n");
                     }
 
                     reader.setSeries(0);
@@ -383,43 +476,20 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
                         ImagePlus imgActin = IJ.openImage(actinFile);
 
                          // actine network
-
                         Objects3DPopulation actinPop = new Objects3DPopulation(getPopFromImage(imgActin).getObjectsWithinVolume(actinMinVol, Double.MAX_VALUE, false));
                         System.out.println("Actin population = "+ actinPop.getNbObjects());
 
-                        // Get actin parameters
-                        ArrayList<double[]> actinParams = actinParameters (actinPop, imgActin, outDirResults, rootName, seriesName);
-                        for (int p = 0; p < actinParams.size(); p++) {
-                            if (p == 0)
-                                outPutActin.write(rootName+"\t"+p+"\t"+actinParams.get(p)[0]+"\t"+actinParams.get(p)[1]+"\n");
-                            else
-                                outPutActin.write("\t\t"+p+"\t"+actinParams.get(p)[0]+"\t"+actinParams.get(p)[1]+"\n");
-                            outPutActin.flush();
-                        }
-                        outPutActin.close();
+                        
                         IJ.run(imgActin, "8-bit", "");
                         ImageHandler imhActinPop = ImageInt.wrap(imgActin).createSameDimensions();
                         imhActinPop.setTitle(rootName);
                         actinPop.draw(imhActinPop, 255);
                         
                         // get actin map
+                        System.out.println("Find actin map ...");
                         ImagePlus actinMap = localThickness3D(imhActinPop.getImagePlus());
                                 
-                        // Skeleton
-                        ImagePlus imgSkel = new Duplicator().run(imhActinPop.getImagePlus());
-                        imhActinPop.closeImagePlus();
-                        
-                        // Find actin network morphology
-                        // Skeletonize
-                        imgSkel.setCalibration(cal);
-                        imgSkel.setTitle(imgActin.getTitle());
-                        IJ.run(imgSkel, "Skeletonize (2D/3D)", "");
-                        analyzeSkel(imgSkel, outPutAnalyze, actinMinLength);
-                        imgSkel.close();
-                        imgActin.close();
-                        
-                        
-                        
+
                         // DAPI
                         int dapiCh = 0;                        
                         options.setCBegin(0, dapiCh);
@@ -430,103 +500,80 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
 
                         // Find nucleus
                         IJ.run(imgNuc, "Difference of Gaussians", "  sigma1=6 sigma2=4 stack");
-                        threshold(imgNuc, "Moments", false, false);
+                        threshold(imgNuc, AutoThresholder.Method.Moments, false, false);
                         IJ.run(imgNuc, "Watershed", "stack");
+
                         Objects3DPopulation nucPop = new Objects3DPopulation(getPopFromImage(imgNuc).getObjectsWithinVolume(nucMinVol, nucMaxVol, true));
                         int nucNumber = nucPop.getNbObjects();
                         System.out.println("Nucleus population = "+ nucNumber);
+                        
                         // get all nucleus as one object
-                        Object3D nucObj = nucPop.getMask();
-
                         // Find centroid from nucleus population
                         ImageHandler imhNucObjects = ImageHandler.wrap(imgNuc).createSameDimensions();
                         Object3D nucObjTotal = getAllObjectsInOne(nucPop, imhNucObjects);
                         Point3D centroid = nucObjTotal.getCenterAsPoint();
-                        System.out.println(centroid.x+","+centroid.y+","+centroid.z);
+                        //System.out.println(centroid.x+","+centroid.y+","+centroid.z);
 
 
-                        // Find nucleus population at X distance from centroid
-                        // Compute how many steps we need (nucleus populations)
-
-                        ArrayList<Objects3DPopulation> nucPopList = new ArrayList();
-                        int shollSteps = shollStep(imgNuc, centroid, shollStart, shollStep);
-                        int shollStop = shollStart + shollStep*shollSteps;
-                        int index = 0;
-                        for (int d = 0; d < shollStop; d+=shollStep) {
-                            double dist = d+shollStep;
-                            IJ.showStatus("Computing nucleus population between "+d+" and "+dist);
-                            nucPopList.add(nucleusInsideDistance(nucPop, actinPop, centroid, d, dist));
-                            //System.out.println("nucleus at "+d+ " "+nucPopList.get(index).getNbObjects());
-                            index++;
-                        }
-
+                        // Nucleus parameters
+                        ArrayList<Cytodex_Nucleus> nucleusList = nucleusParameters(nucPop, actinPop, centroid, actinMap);
+                        
                         // Save nucleus population
                         System.out.println("Saving Object population ...");
                         IJ.run(imgNuc,"32-bit","");
-                        for (Objects3DPopulation nucleus : nucPopList) {
-                            if (nucleus.getNbObjects() > 0)
-                                for (int o = 0; o < nucleus.getNbObjects(); o++) {
-                                    Object3D obj = nucleus.getObject(o);
-                                    String[] objParam = obj.getName().split(",");
-                                    float value = Float.valueOf(objParam[0]);
-                                    obj.draw(imhNucObjects, value);
-                                }
+                        for (int n = 0; n < nucleusList.size(); n++) {
+                            Object3D nucObj = nucPop.getObject(n);
+                            float value = (float)nucleusList.get(n).getCenterDistToCenter();
+                            nucObj.draw(imhNucObjects, value);
                         }
-                        new ObjectCreator3D(imhNucObjects).createSphere(centroid.getX(), centroid.getY(), centroid.getZ(), 25, 255, false);
+                        new ObjectCreator3D(imhNucObjects).createEllipsoidUnit(centroid.getX(), centroid.getY(), centroid.getZ(), 20, 20, 20/cal.pixelDepth, 255, false);
                         IJ.run(imhNucObjects.getImagePlus(), "Cyan Hot","");
                         imhNucObjects.setTitle(rootName + "_" + seriesName + "_NucleusObjects.tif");
                         imhNucObjects.save(outDirResults);
                         imhNucObjects.closeImagePlus();
-                        imgNuc.close();
 
                         // Write parameters for each nucleus
-                        int popIndex = 0;
-                        ImageHandler imgMapActin = ImageHandler.wrap(actinMap);
-                        for (int d = 0; d < shollStop; d+=shollStep) {
-                            double diameter = d + shollStep;
-                            Objects3DPopulation pop = nucPopList.get(popIndex);
-                            int nuc = pop.getNbObjects();
-                            if (nuc > 1) {
-                                for (int o = 0; o < nuc; o++) {
-                                    Object3D obj = pop.getObject(o);
-                                    String[] objParam = obj.getName().split(",");
-                                    if (o == 0)
-                                        outPutNucleus.write(rootName+"\t"+diameter+"\t"+o+"\t"+objParam[0]+"\t"+obj.getVolumeUnit()+"\t"+objParam[1]+"\t"+obj.getValue()+"\t"+obj.getPixCenterValue(imgMapActin)+"\n");
-                                    else
-                                        outPutNucleus.write("\t\t"+o+"\t"+objParam[0]+"\t"+obj.getVolumeUnit()+"\t"+objParam[1]+"\t"+obj.getValue()+"\t"+obj.getPixCenterValue(imgMapActin)+"\n");
-                                    outPutNucleus.flush();
-                                }
-                            }
-                            popIndex++;
-                        }
-
-                        // compute mean closest distances                    
-                        // Write data
-
-                        popIndex = 0;
-                        for (int d = 0; d < shollStop; d+=shollStep) {
-                            double dist = d+shollStep;
-                            IJ.showStatus("Computing parameters diameter "+ dist);
-                            Objects3DPopulation pop = nucPopList.get(popIndex);
-                            if (pop.getNbObjects() > 1) {
-                                ArrayUtil allDist = pop.distancesAllClosestCenter();
-                                double meanDist = allDist.getMean();
-                                double stdDist = allDist.getStdDev();
-                                double[] vol = getMeanVolume(pop, false);
-                                double[] volActin = getMeanVolume(pop, true);
-                                if (popIndex == 0)
-                                    outPutGlobalNucleus.write(rootName+"\t"+dist+"\t"+pop.getNbObjects()+"\t"+meanDist+"\t"+stdDist+"\t"+vol[0]+"\t"+vol[1]+"\t"+volActin[0]+"\t"+volActin[1]+"\n");
-                                else
-                                    outPutGlobalNucleus.write("\t"+dist+"\t"+pop.getNbObjects()+"\t"+meanDist+"\t"+stdDist+"\t"+vol[0]+"\t"+vol[1]+"\t"+volActin[0]+"\t"+volActin[1]+"\n");
-                            }
+                        writeNucParameters(nucleusList, imgNuc, centroid, rootName);
+                        imgNuc.close();
+                        
+//                        // Skeleton
+//                        ImagePlus imgSkel = new Duplicator().run(imhActinPop.getImagePlus());
+//                        imhActinPop.closeImagePlus();
+//                        removeSpheroid(imgSkel, 0, centroid);
+//                        // Find actin network morphology
+//                        // Skeletonize
+//                        imgSkel.setCalibration(cal);
+//                        imgSkel.setTitle(imgActin.getTitle());
+//                        IJ.run(imgSkel, "Skeletonize (2D/3D)", "");
+//                        
+//                        analyzeSkel(imgSkel, outPutAnalyze, outDirResults, actinMinLength, iterPruning);
+//                        imgSkel.close();
+//                        imgActin.close();
+                        
+                        // Get actin parameters
+                        ArrayList<Cytodex_Actin> actinParams = actinParameters (actinPop, centroid, imgActin, outDirResults, rootName, seriesName);
+                        // find nucleus in actin
+                        
+                        // write actin results
+                        //get nucleus number in actin object
+                        findNucleusInActin(actinPop, nucPop, actinParams);       
+                        for (int p = 0; p < actinParams.size(); p++) {
+                            if (p == 0)
+                                outPutActin.write(rootName+"\t"+actinParams.get(p).getIndex()+"\t"+actinParams.get(p).getCenterDistToCenter()+"\t"
+                                        +actinParams.get(p).getBorderDistToCenter()+"\t"+actinParams.get(p).getVolume()+"\t"+actinParams.get(p).getNucNumber()+"\n");
                             else
-                                if (popIndex == 0)
-                                    outPutGlobalNucleus.write(rootName+"\t"+dist+"\t0\t0\t0\t0\t0\n");
-                                else
-                                    outPutGlobalNucleus.write("\t"+dist+"\t0\t0\t0\t0\t0\n");
-                            outPutNucleus.flush();
-                            popIndex++;
-                        }
+                                outPutActin.write("\t"+actinParams.get(p).getIndex()+"\t"+actinParams.get(p).getCenterDistToCenter()+"\t"
+                                        +actinParams.get(p).getBorderDistToCenter()+"\t"+actinParams.get(p).getVolume()+"\t"+actinParams.get(p).getNucNumber()+"\n");
+                            outPutActin.flush();
+                        }                        
+                        // compute global nucleus parameters                    
+                        // Write data
+                        writeNucleusGlobalParameters(nucleusList, nucObjTotal, imgNuc, centroid, rootName);
+                        
+                        // save image with nucleus (red) and actin (green) objects
+                        saveImgObjects(nucPop, actinPop, outDirResults+rootName, imgNuc);
+                        
+                        imgNuc.close();
                     }
 
                 }                    

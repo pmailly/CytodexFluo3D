@@ -12,6 +12,7 @@ import ij.gui.EllipseRoi;
 import ij.gui.Roi;
 import ij.gui.WaitForUserDialog;
 import ij.io.FileSaver;
+import ij.measure.Calibration;
 import ij.plugin.Duplicator;
 import ij.plugin.PlugIn;
 import ij.plugin.RGBStackMerge;
@@ -30,6 +31,8 @@ import loci.common.services.ServiceFactory;
 import loci.formats.FormatException;
 import loci.formats.meta.IMetadata;
 import loci.formats.services.OMEXMLService;
+import loci.plugins.BF;
+import loci.plugins.in.ImporterOptions;
 import loci.plugins.util.ImageProcessorReader;
 import mcib3d.geom.Object3D;
 import mcib3d.geom.Objects3DPopulation;
@@ -50,7 +53,9 @@ public class CytodexDSred_Fluo3D_Lite implements PlugIn {
     private boolean cropZ = false;
     private String cropDir = "";
     private String autoThreshold_Method = "Default";
-    
+    private Calibration cal = new Calibration();
+    private double smallBranch = 25;
+    private int iterPruning =5;
     
     
     private boolean dialog() {
@@ -312,7 +317,19 @@ public class CytodexDSred_Fluo3D_Lite implements PlugIn {
                     }
                     
                     // open red cytoDex bead  
-                    ImagePlus imgCBead = readChannel(reader, width, height, imgCh0, fileNameWithOutExt, seriesName+"_CytodexBead");
+                    ImporterOptions options = new ImporterOptions();
+                    options.setColorMode(ImporterOptions.COLOR_MODE_GRAYSCALE);
+                    options.setId(imageName);
+                    options.setSplitChannels(true);
+                    options.setQuiet(true);
+                    
+                    
+                    // open red cytoDex bead C0 
+                    options.setCBegin(0, 0);
+                    options.setCEnd(0, 0);
+                       
+                    ImagePlus imgCBead = BF.openImagePlus(options)[0];
+                    
                     // detect and remove bead
                     findSpheroid(imgCBead, roi);
                     // no bead
@@ -329,7 +346,9 @@ public class CytodexDSred_Fluo3D_Lite implements PlugIn {
                         imgCBead.flush();
                         
                         // open green cytoDex capillaries 
-                        ImagePlus imgCytodex = readChannel(reader, width, height, imgCh2, fileNameWithOutExt, seriesName+"_Vessel");
+                        options.setCBegin(0, 2);
+                        options.setCEnd(0, 2);
+                        ImagePlus imgCytodex = BF.openImagePlus(options)[0];
                         removeSpheroid(imgCytodex, 0);
                         
                         // crop stack in Z
@@ -337,7 +356,9 @@ public class CytodexDSred_Fluo3D_Lite implements PlugIn {
                             cropStack(imgCytodex, cropDir);
                         
                        // open green cytoDex nucleus 
-                        ImagePlus imgCNuc = readChannel(reader, width, height, imgCh1, fileNameWithOutExt, seriesName+"_Nucleus");
+                        options.setCBegin(0, 1);
+                        options.setCEnd(0, 1);
+                        ImagePlus imgCNuc = BF.openImagePlus(options)[0];
                         removeSpheroid(imgCNuc, 0);
                         // Crop stack in Z
                         if (cropZ)
@@ -378,7 +399,7 @@ public class CytodexDSred_Fluo3D_Lite implements PlugIn {
                             } 
                             else {
                                 // Analyze skeleton
-                                analyzeSkel(imgSkelDOG,outputAnalyze, smallBranch);
+                                analyzeSkel(imgSkelDOG,outputAnalyze, imgOutDir, smallBranch, iterPruning);
                                 // compute image map
                                 //ImageFloat imgMapDOG = localThickness3D(imgC1DOG);                           
                                 // compute mean diameter and intersections from concentric spheres

@@ -7,9 +7,11 @@ import ij.IJ;
 import ij.ImagePlus;
 import ij.gui.Roi;
 import ij.io.FileSaver;
+import ij.measure.Calibration;
 import ij.plugin.Duplicator;
 import ij.plugin.PlugIn;
 import ij.plugin.frame.RoiManager;
+import ij.process.AutoThresholder;
 import ij.process.ImageStatistics;
 import java.io.*;
 import java.util.Arrays;
@@ -23,15 +25,20 @@ import loci.common.services.ServiceFactory;
 import loci.formats.FormatException;
 import loci.formats.meta.IMetadata;
 import loci.formats.services.OMEXMLService;
+import loci.plugins.BF;
+import loci.plugins.in.ImporterOptions;
 import loci.plugins.util.ImageProcessorReader;
 import mcib3d.image3d.ImageFloat;
+import mcib3d.image3d.ImageHandler;
 
 
 public class CytodexDSred_Fluo3D implements PlugIn {
     
     private final String positionName = "Experiment|AcquisitionBlock|RegionsSetup|SampleHolder|SingleTileRegion|Name #";
     public Roi roi = null;
-    
+    public Calibration cal = new Calibration();
+    private double smallBranch = 25;
+    private int interPruning =5;
      
     @Override
     public void run(String arg) {
@@ -119,8 +126,20 @@ public class CytodexDSred_Fluo3D implements PlugIn {
                         rm.close();
                     }
                     
+                    
+                    ImporterOptions options = new ImporterOptions();
+                    options.setColorMode(ImporterOptions.COLOR_MODE_GRAYSCALE);
+                    options.setId(imageName);
+                    options.setSplitChannels(true);
+                    options.setQuiet(true);
+                    
+                    
                     // open red cytoDex bead C0 
-                    ImagePlus imgC0 = readChannel(reader, width, height, 0, fileNameWithOutExt, seriesName+"_CytodexBead");
+                    options.setCBegin(0, 0);
+                    options.setCEnd(0, 0);
+                       
+                    ImagePlus imgC0 = BF.openImagePlus(options)[0];
+                    
                     // 
                     // detect and remove bead
                     findSpheroid(imgC0, roi);
@@ -143,7 +162,9 @@ public class CytodexDSred_Fluo3D implements PlugIn {
                         
 
                         // open green cytoDex capillaries C1 
-                        ImagePlus imgC1 = readChannel(reader, width, height, 1, fileNameWithOutExt, seriesName+"_Cytodex");
+                        options.setCBegin(0, 1);
+                        options.setCEnd(0, 1);
+                        ImagePlus imgC1 = BF.openImagePlus(options)[0];
                         IJ.run(imgC1, "Median...", "radius=2 stack");
                         
                         // Find with DOG
@@ -169,7 +190,9 @@ public class CytodexDSred_Fluo3D implements PlugIn {
                         } 
                         else { 
                             // open blue nucleus C2
-                            ImagePlus imgC2 = readChannel(reader, width, height, 2, fileNameWithOutExt, seriesName+"_Nucleus");
+                            options.setCBegin(0, 2);
+                            options.setCEnd(0, 2);
+                            ImagePlus imgC2 = BF.openImagePlus(options)[0];
                             // find nucleus
                             findNucleus(imgC2, roi, imageNum);
                             imgC2.changes = false;
@@ -180,11 +203,11 @@ public class CytodexDSred_Fluo3D implements PlugIn {
                             //intersectionAnalysis(imgSkelDOG); 
                             
                             // Analyze skeleton
-                            analyzeSkel(imgSkelDOG,outputAnalyze, smallBranch);
+                            analyzeSkel(imgSkelDOG,outputAnalyze, imgOutDir, smallBranch, interPruning);
                             // compute image map
-                            ImageFloat imgMapDOG = localThickness3D(imgC1DOG);                           
+                            ImagePlus imgMapDOG = localThickness3D(imgC1DOG);                           
                             // compute mean diameter and intersections from concentric spheres
-                            diameterAnalysis(imgSkelDOG, imgMapDOG);
+                            diameterAnalysis(imgSkelDOG, ImageHandler.wrap(imgMapDOG));
                         }
                         imgSkelDOG.changes=false;
                         imgSkelDOG.flush();
