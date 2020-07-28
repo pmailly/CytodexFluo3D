@@ -9,7 +9,7 @@ package Tools;
  *
  * @author phm
  */
-public class Cytodex_Actin {
+public class CytoDex_Actin_Cell {
 
     // index
     private int index;
@@ -21,18 +21,16 @@ public class Cytodex_Actin {
     private double borderDistToCenter;
     // nucleus number
     private int nucNumber;
-    // angle with nucleus mainAxes
-    private double angle;
+
     
     
     
-    public Cytodex_Actin(int index, double volume, double centerDistToCenter, double borderDistToCenter, int nucNumber, double angle) {
+    public CytoDex_Actin_Cell(int index, double volume, double centerDistToCenter, double borderDistToCenter, int nucNumber) {
             this.index = index;
             this.volume = volume;
             this.centerDistToCenter = centerDistToCenter;
             this.borderDistToCenter = borderDistToCenter;
             this.nucNumber = nucNumber;
-            this.angle = angle;
     }
     
     public void setIndex(int index) {
@@ -67,7 +65,7 @@ public class Cytodex_Actin {
         return borderDistToCenter;
     }
     
-    public void setNucNumber(int nucNumber) {
+     public void setNucNumber(int nucNumber) {
         this.nucNumber = nucNumber;
     }
     
@@ -75,11 +73,5 @@ public class Cytodex_Actin {
         return nucNumber;
     }
     
-    public void setAngle(double angle) {
-        this.angle = angle;
-    }
-    public double getAngle() {
-        return angle;
-    }
     
 }
