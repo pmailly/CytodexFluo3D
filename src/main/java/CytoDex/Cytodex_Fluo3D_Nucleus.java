@@ -249,11 +249,13 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
             double distCenter = nucObj.distPixelCenter(centroid);
             double diam = nucObj.getPixCenterValue(imhActin);
             Vector3D nucVec = nucObj.getMainAxis();
-            double angle = nucVec.angleDegrees(nucVector);
+            double allAngle = nucVec.angleDegrees(nucVector);
+            Vector3D nucVecCentroid = nucObj.vectorPixelUnitBorder(centroid.getX(), centroid.getY(), centroid.getZ());
+            double angle = nucVec.angleDegrees(nucVecCentroid);
             int actinNumber = actinIndex(nucObj, actinPop);
             Object3D closestObj = nucPop.closestCenter(nucObj, true);
             double closestDist = nucObj.distCenterUnit(closestObj);
-            Cytodex_Nucleus nucleus = new Cytodex_Nucleus(index, vol, distCenter, sph, comp, angle, actinNumber, closestDist, diam);
+            Cytodex_Nucleus nucleus = new Cytodex_Nucleus(index, vol, distCenter, sph, comp, angle, allAngle, actinNumber, closestDist, diam);
             nucleusList.add(nucleus);
             index++;
         }
@@ -279,15 +281,16 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
                     double volume = inSphere.get(n).getVolume();
                     double sph = inSphere.get(n).getSphericity();
                     double comp = inSphere.get(n).getCompactness();
+                    double allAngle = inSphere.get(n).getAllAngle();
                     double angle = inSphere.get(n).getAngle();
                     int actinObj = inSphere.get(n).getActinObjectIndex();
                     double ActinDiameter = 2 *  inSphere.get(n).getActinDiameter();
                     if (n == 0)
                         outPutNucleus.write(name+"\t"+d+"-"+shollDiameter+"\t"+index+"\t"+distToCenter+"\t"+volume+"\t"+closestDist+"\t"+actinObj+"\t"
-                                +ActinDiameter+"\t"+sph+"\t"+comp+"\t"+angle+"\n");
+                                +ActinDiameter+"\t"+sph+"\t"+comp+"\t"+allAngle+"\t"+angle+"\n");
                     else
                         outPutNucleus.write("\t\t"+index+"\t"+distToCenter+"\t"+volume+"\t"+closestDist+"\t"+actinObj+"\t"
-                                +ActinDiameter+"\t"+sph+"\t"+comp+"\t"+angle+"\n");
+                                +ActinDiameter+"\t"+sph+"\t"+comp+"\t"+allAngle+"\t"+angle+"\n");
                     outPutNucleus.flush();
                 }
             }
@@ -444,12 +447,12 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
                         FileWriter fwEachNucleus = new FileWriter(outDirResults + "Nucleus_results.xls",false);
                         outPutNucleus = new BufferedWriter(fwEachNucleus);
                         outPutNucleus.write("Image Name\tSphere diameter\t#Nucleus\tDistance from centroid\tNucleus Volume\tDistance to closest nucleus"
-                                + "\t#Actin\tActin diameter\tSphericity\tCompactness\tOrientation\n");
+                                + "\t#Actin\tActin diameter\tSphericity\tCompactness\tOrientation to all nucleus\tOrientation to centroid\n");
                         
                         // file for analyze actin results
                         FileWriter fwEachActin = new FileWriter(outDirResults + "Actin_results.xls",false);
                         outPutActin = new BufferedWriter(fwEachActin);
-                        outPutActin.write("Image Name\t#Actin\tCenter distance to centroid\tBorder distance to centroid\tActine volume\tNucleus number\ttOrientation\n");
+                        outPutActin.write("Image Name\t#Actin\tCenter distance to centroid\tBorder distance to centroid\tActine volume\tNucleus number\tOrientation to all nucleus\n");
                     }
 
                     reader.setSeries(0);
