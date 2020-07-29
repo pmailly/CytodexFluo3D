@@ -22,17 +22,19 @@ public class Cytodex_Actin {
     // nucleus number
     private int nucNumber;
     // angle with nucleus mainAxes
-    private double angle;
+    private double allAngle;
+    // angle with centroid and actin mainAxes
+    private double centroidAngle;
     
     
-    
-    public Cytodex_Actin(int index, double volume, double centerDistToCenter, double borderDistToCenter, int nucNumber, double angle) {
+    public Cytodex_Actin(int index, double volume, double centerDistToCenter, double borderDistToCenter, int nucNumber, double centroidAngle, double allAngle) {
             this.index = index;
             this.volume = volume;
             this.centerDistToCenter = centerDistToCenter;
             this.borderDistToCenter = borderDistToCenter;
             this.nucNumber = nucNumber;
-            this.angle = angle;
+            this.centroidAngle = centroidAngle;
+            this.allAngle = allAngle;
     }
     
     public void setIndex(int index) {
@@ -75,11 +77,17 @@ public class Cytodex_Actin {
         return nucNumber;
     }
     
-    public void setAngle(double angle) {
-        this.angle = angle;
+    public void setAllAngle(double allAngle) {
+        this.allAngle = allAngle;
     }
-    public double getAngle() {
-        return angle;
+    public double getAllAngle() {
+        return allAngle;
     }
     
+    public void setCentroidAngle(double centroidAngle) {
+        this.centroidAngle = centroidAngle;
+    }
+    public double getCentroidAngle() {
+        return centroidAngle;
+    }
 }

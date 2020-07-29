@@ -23,7 +23,7 @@ public class Cytodex_Nucleus {
     // Compactness
     private double compactness;
     // angle between centroid and main axes
-    private double angle;
+    private double centroidAngle;
     // angle between main axes and all nucleus main axe
     private double allAngle;
     // nucleus number
@@ -34,14 +34,14 @@ public class Cytodex_Nucleus {
     private double actinDiameter;
     
     
-     public Cytodex_Nucleus(int index, double volume, double centerDistToCenter, double sphericity, double compactness, double angle, double allAngle,
+     public Cytodex_Nucleus(int index, double volume, double centerDistToCenter, double sphericity, double compactness, double centroidAngle, double allAngle,
              int actinObjectIndex, double nucClosestDist, double actinDiameter) {
             this.index = index;
             this.volume = volume;
             this.centerDistToCenter = centerDistToCenter;
             this.sphericity = sphericity;
             this.compactness = compactness;
-            this.angle = angle;
+            this.centroidAngle = centroidAngle;
             this.allAngle = allAngle;
             this.actinObjectIndex = actinObjectIndex;
             this.nucClosestDist = nucClosestDist;
@@ -96,12 +96,12 @@ public class Cytodex_Nucleus {
         return compactness;
     }
     
-    public void setAngle(double angle) {
-        this.angle = angle;
+    public void setCentroidAngle(double centroidAngle) {
+        this.centroidAngle = centroidAngle;
     }
     
-    public double getAngle() {
-        return angle;
+    public double getCentroidAngle() {
+        return centroidAngle;
     }
     
     public void setAllAngle(double allAngle) {
