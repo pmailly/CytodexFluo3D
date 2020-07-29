@@ -15,6 +15,8 @@ import ij.plugin.Duplicator;
 import ij.plugin.PlugIn;
 import ij.plugin.RGBStackMerge;
 import ij.process.AutoThresholder;
+import ij.process.ImageProcessor;
+import java.awt.Font;
 import java.io.*;
 import java.nio.file.Files;
 import java.nio.file.Paths;
@@ -354,6 +356,26 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
         img.updateAndDraw();
     } 
     
+     /**
+     * Label object
+     * @param popObj
+     * @param img 
+     */
+    public void labelsObject (Object3D obj, int n, ImageHandler img) {
+        int fontSize = Math.round(10f/(float)cal.pixelWidth);
+        Font tagFont = new Font("SansSerif", Font.PLAIN, fontSize);
+        int[] box = obj.getBoundingBox();
+        int z = (int)obj.getCenterZ();
+        int x = box[0] - 2;
+        int y = box[2] - 2;
+        img.getImagePlus().setSlice(z+1);
+        ImageProcessor ip = img.getImagePlus().getProcessor();
+        ip.setFont(tagFont);
+        ip.setColor(255);
+        ip.drawString(Integer.toString(n), x, y);
+        img.getImagePlus().updateAndDraw();
+    }
+    
     /**
      * Save object Populations
      * @param nucPop
@@ -528,6 +550,7 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
                             Object3D nucObj = nucPop.getObject(n);
                             float value = (float)nucleusList.get(n).getCenterDistToCenter();
                             nucObj.draw(imhNucObjects, value);
+                            labelsObject(nucObj, nucleusList.get(n).getIndex(), imhNucObjects);
                         }
                         new ObjectCreator3D(imhNucObjects).createEllipsoidUnit(centroid.getX(), centroid.getY(), centroid.getZ(), 20, 20, 20/cal.pixelDepth, 255, false);
                         IJ.run(imhNucObjects.getImagePlus(), "Cyan Hot","");
