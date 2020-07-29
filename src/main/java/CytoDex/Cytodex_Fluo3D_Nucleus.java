@@ -56,7 +56,6 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
     private double actinMinVol = 1000;
     private double actinMinLength = 25;
     private int iterPruning = 5;
-    private double actinColoc = 30;
     public Calibration cal = new Calibration();
     
     
@@ -76,7 +75,6 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
        gd.addNumericField("Actin minimum branch length : ", actinMinLength);
        gd.addNumericField("Iteration number to prune : ", iterPruning);
        gd.addNumericField("Nucleus minimum volume : ", nucMinVol);
-       gd.addNumericField("% Coloc Nucleus in Actin\n (zero = one voxel colocalized): ", actinColoc);
        gd.showDialog();
        if (gd.wasCanceled())
             canceled = true;
@@ -87,7 +85,6 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
        actinMinLength = gd.getNextNumber();
        iterPruning = (int)gd.getNextNumber();
        nucMinVol = gd.getNextNumber();
-       actinColoc = gd.getNextNumber();
        return(canceled);
     }
     
@@ -219,17 +216,9 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
         int totalActin = actinPop.getNbObjects();
         for (int n = 0; n < totalActin; n++) {
             Object3D actinObj = actinPop.getObject(n);
-            if (actinColoc == 0) {
-                if (nucObj.hasOneVoxelColoc(actinObj)) {
-                    actinNumber = (n+1);
-                    n = totalActin;
-                }
-            }
-            else {
-                if (nucObj.getColoc(actinObj) >= actinColoc) {
-                    actinNumber = (n+1);
-                    n = totalActin;
-                }
+            if (nucObj.hasOneVoxelColoc(actinObj)) {
+                actinNumber = (n+1);
+                n = totalActin;
             }
         }
         return(actinNumber);
@@ -249,12 +238,14 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
             double sph = nucObj.getSphericity(true);
             double comp = nucObj.getCompactness(true);
             double distCenter = nucObj.distPixelBorderUnit(centroid.getX(), centroid.getY(), centroid.getZ());
-            double diam = nucObj.getPixCenterValue(imhActin);
             Vector3D nucVec = nucObj.getMainAxis();
             double allAngle = nucVec.angleDegrees(nucVector);
             Vector3D nucVecCentroid = nucObj.vectorPixelUnitBorder(centroid.getX(), centroid.getY(), centroid.getZ());
             double centroidAngle = nucVec.angleDegrees(nucVecCentroid);
             int actinNumber = actinIndex(nucObj, actinPop);
+            double diam = 0;
+            if (actinNumber != -1)
+                diam = nucObj.getPixCenterValue(imhActin);
             Object3D closestObj = nucPop.closestCenter(nucObj, true);
             double closestDist = nucObj.distCenterUnit(closestObj);
             Cytodex_Nucleus nucleus = new Cytodex_Nucleus(index, vol, distCenter, sph, comp, centroidAngle, allAngle, actinNumber, closestDist, diam);
@@ -487,7 +478,7 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
                         ImagePlus imgActin = IJ.openImage(actinFile);
 
                          // actine network
-                        Objects3DPopulation actinPop = new Objects3DPopulation(getPopFromImage(imgActin).getObjectsWithinVolume(actinMinVol, Double.MAX_VALUE, false));
+                        Objects3DPopulation actinPop = new Objects3DPopulation(getPopFromImage(imgActin).getObjectsWithinVolume(actinMinVol, Double.MAX_VALUE, true));
                         System.out.println("Actin population = "+ actinPop.getNbObjects());
 
                         
