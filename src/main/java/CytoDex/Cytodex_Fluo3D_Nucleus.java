@@ -43,6 +43,7 @@ import mcib3d.image3d.ImageHandler;
 import mcib3d.image3d.ImageInt;
 import mcib3d.image3d.ImageLabeller;
 import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.math3.exception.MathRuntimeException;
 import org.apache.commons.math3.stat.descriptive.DescriptiveStatistics;
 
 
@@ -165,7 +166,7 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
      * 
      * 
     */
-     private ArrayList<Cytodex_Actin> actinParameters (Objects3DPopulation actinPop, Point3D centroid, Vector3D nucVector, ImagePlus img, String out, String name, String series) {
+     private ArrayList<Cytodex_Actin> actinParameters (Objects3DPopulation actinPop, Point3D centroid, Vector3D allNucVector, ImagePlus img, String out, String name, String series) {
         ImageHandler imhActinObjects = ImageInt.wrap(img).createSameDimensions();
         ArrayList<Cytodex_Actin> actinParams = new ArrayList<>();
         int index = 1;
@@ -175,9 +176,9 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
             double distBorder = actinObj.distPixelBorderUnit(centroid.x, centroid.y, centroid.z);
             double vol = actinObj.getVolumeUnit();
             Vector3D actinVec = actinObj.getMainAxis();
-            double allAngle = actinVec.angleDegrees(nucVector);
+            double allAngle = angleBetweenVectors(actinVec, allNucVector);
             Vector3D actinVecCentroid = actinObj.vectorPixelUnitBorder(centroid.getX(), centroid.getY(), centroid.getZ());
-            double centroidAngle = actinVec.angleDegrees(actinVecCentroid);
+            double centroidAngle = angleBetweenVectors(actinVec, actinVecCentroid);
             actinObj.draw(imhActinObjects, index);
             Cytodex_Actin actin = new Cytodex_Actin(index, vol, distCenter, distBorder, 0, centroidAngle, allAngle);
             actinParams.add(actin);
@@ -226,11 +227,16 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
         return(actinNumber);
     }
     
+    
+    private double angleBetweenVectors(Vector3D v1, Vector3D v2) {
+        double angle = (Math.acos((v1.x * v2.x + v1.y * v2.y)/((Math.sqrt(v1.x*v1.x + v1.y*v1.y) * Math.sqrt(v2.x*v2.x + v2.y*v2.y))))/Math.PI*180);
+        return(angle);
+    }
         
     /**
      * Find nucleus parameters
      */
-    private ArrayList<Cytodex_Nucleus> nucleusParameters(Objects3DPopulation nucPop, Objects3DPopulation actinPop, Point3D centroid, Vector3D nucVector, ImagePlus actinMap) {
+    private ArrayList<Cytodex_Nucleus> nucleusParameters(Objects3DPopulation nucPop, Objects3DPopulation actinPop, Point3D centroid, Vector3D allNucVector, ImagePlus actinMap) {
         ArrayList<Cytodex_Nucleus> nucleusList = new ArrayList();
         ImageHandler imhActin = ImageHandler.wrap(actinMap);
         int index = 1;
@@ -241,9 +247,9 @@ public class Cytodex_Fluo3D_Nucleus implements PlugIn {
             double comp = nucObj.getCompactness(true);
             double distCenter = nucObj.distPixelBorderUnit(centroid.getX(), centroid.getY(), centroid.getZ());
             Vector3D nucVec = nucObj.getMainAxis();
-            double allAngle = nucVec.angleDegrees(nucVector);
+            double allAngle = angleBetweenVectors(nucVec, allNucVector);
             Vector3D nucVecCentroid = nucObj.vectorPixelUnitBorder(centroid.getX(), centroid.getY(), centroid.getZ());
-            double centroidAngle = nucVec.angleDegrees(nucVecCentroid);
+            double centroidAngle = angleBetweenVectors(nucVec, nucVecCentroid);
             int actinNumber = actinIndex(nucObj, actinPop);
             double diam = 0;
             if (actinNumber != -1)
